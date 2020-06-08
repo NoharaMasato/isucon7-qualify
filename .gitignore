@@ -3,7 +3,11 @@
 *.swo
 *.pyc
 .idea/
+init_data*
 webapp/php/vendor
 bench/isucon7q-initial-dataset.sql.gz
 bench/result.json
 webapp/perl/local
+webapp/public/icons*
+bench/isucon7q-initial-dataset*
+webapp/go/src/github.com
