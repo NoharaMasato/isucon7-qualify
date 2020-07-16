@@ -17,6 +17,8 @@ import (
 	"strings"
 	"time"
 
+	_ "net/http/pprof"
+
 	"github.com/go-sql-driver/mysql"
 	"github.com/gorilla/sessions"
 	"github.com/jmoiron/sqlx"
@@ -436,6 +438,7 @@ func queryHaveRead(userID, chID int64) (int64, error) {
 	return h.MessageID, nil
 }
 
+// ログインしているユーザに対してチャンネルごとに読んでいないメッセージ数をカウントする
 func fetchUnread(c echo.Context) error {
 	userID := sessUserID(c)
 	if userID == 0 {
@@ -459,10 +462,13 @@ func fetchUnread(c echo.Context) error {
 
 		var cnt int64
 		if lastID > 0 {
+			// lastIDよりも大きいものは読んでいないので、抽出して数える
 			err = db.Get(&cnt,
 				"SELECT COUNT(*) as cnt FROM message WHERE channel_id = ? AND ? < id",
 				chID, lastID)
 		} else {
+			// lastIDがhavereadテーブルに存在しないということは記事を一つも読んでいないということ
+			// チャンネルの全てのメッセージのカウントをする
 			err = db.Get(&cnt,
 				"SELECT COUNT(*) as cnt FROM message WHERE channel_id = ?",
 				chID)
@@ -722,6 +728,9 @@ func tRange(a, b int64) []int64 {
 }
 
 func main() {
+	go func() {
+		log.Println(http.ListenAndServe("localhost:6060", nil))
+	}()
 	e := echo.New()
 	funcs := template.FuncMap{
 		"add":    tAdd,
