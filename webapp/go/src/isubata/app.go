@@ -25,6 +25,7 @@ import (
 	"github.com/labstack/echo"
 	"github.com/labstack/echo-contrib/session"
 	"github.com/labstack/echo/middleware"
+	//"github.com/fatih/structs"
 )
 
 const (
@@ -418,16 +419,16 @@ func queryChannels() ([]int64, error) {
 }
 
 func queryHaveRead(userID, chID int64) (int64, error) {
-	type HaveRead struct {
-		UserID    int64     `db:"user_id"`
-		ChannelID int64     `db:"channel_id"`
-		MessageID int64     `db:"message_id"`
-		UpdatedAt time.Time `db:"updated_at"`
-		CreatedAt time.Time `db:"created_at"`
-	}
-	h := HaveRead{}
-
-	err := db.Get(&h, "SELECT * FROM haveread WHERE user_id = ? AND channel_id = ?",
+	// type HaveRead struct {
+	// 	UserID    int64     `db:"user_id"`
+	// 	ChannelID int64     `db:"channel_id"`
+	// 	MessageID int64     `db:"message_id"`
+	// 	UpdatedAt time.Time `db:"updated_at"`
+	// 	CreatedAt time.Time `db:"created_at"`
+	// }
+	// h := HaveRead{}
+  var h int64
+	err := db.Get(&h, "SELECT message_id FROM haveread WHERE user_id = ? AND channel_id = ?",
 		userID, chID)
 
 	if err == sql.ErrNoRows {
@@ -435,7 +436,7 @@ func queryHaveRead(userID, chID int64) (int64, error) {
 	} else if err != nil {
 		return 0, err
 	}
-	return h.MessageID, nil
+	return h, nil
 }
 
 // ログインしているユーザに対してチャンネルごとに読んでいないメッセージ数をカウントする
@@ -446,35 +447,53 @@ func fetchUnread(c echo.Context) error {
 	}
 
 	time.Sleep(time.Second)
-
+	// SELECT *,COUNT(*) as read_cnt FROM haveread GROUP BY channel_id,user_id;
+	// SELECT channel_id,COUNT(*) as message_cnt FROM message GROUP BY channel_id;
+	// SELECT msg_num.channel_id,msg_num.message_cnt,user_read.read_cnt from (SELECT channel_id,COUNT(*) as message_cnt FROM message GROUP BY channel_id) as msg_num LEFT JOIN (SELECT channel_id,COUNT(*) as read_cnt FROM haveread where user_id=966 GROUP BY channel_id,user_id) as user_read ON msg_num.channel_id=user_read.channel_id;
+	// SELECT msg_num.channel_id,IFNULL((msg_num.message_cnt - user_read.read_cnt),msg_num.message_cnt) as left_cnt from (SELECT channel_id,COUNT(*) as message_cnt FROM message GROUP BY channel_id) as msg_num LEFT JOIN (SELECT channel_id,COUNT(*) as read_cnt FROM haveread where user_id=966 GROUP BY channel_id,user_id) as user_read ON msg_num.channel_id=user_read.channel_id;
 	channels, err := queryChannels()
+
+	type HaveReadCnt struct {
+		ChannelID int64     `db:"channel_id"`
+		ReadCnt   int64     `db:"read_cnt"`
+	}
+	type MessageCnt struct {
+		ChannelID   int64    `db:"channel_id"`
+		MessageCnt int64     `db:"message_cnt"`
+	}
+	h := []HaveReadCnt{}
+	m := []MessageCnt{}
+	err = db.Select(&h,
+		"SELECT channel_id,COUNT(*) as read_cnt FROM haveread where user_id=? GROUP BY channel_id,user_id",
+		userID)
 	if err != nil {
 		return err
 	}
 
+	err = db.Select(&m, "SELECT channel_id,COUNT(*) as message_cnt FROM message GROUP BY channel_id")
+	if err != nil {
+		return err
+	}
+
+	haveReadMap := map[int64]int64{}
+	messageCntMap := map[int64]int64{}
+
+	for _, hi := range h {
+		fmt.Println(hi.ChannelID)
+		fmt.Println(hi.ReadCnt)
+		haveReadMap[hi.ChannelID] = hi.ReadCnt
+	}
+	for _, mi := range m {
+		messageCntMap[mi.ChannelID] = mi.MessageCnt
+	}
+
 	resp := []map[string]interface{}{}
-
 	for _, chID := range channels {
-		lastID, err := queryHaveRead(userID, chID)
-		if err != nil {
-			return err
-		}
-
 		var cnt int64
-		if lastID > 0 {
-			// lastIDよりも大きいものは読んでいないので、抽出して数える
-			err = db.Get(&cnt,
-				"SELECT COUNT(*) as cnt FROM message WHERE channel_id = ? AND ? < id",
-				chID, lastID)
-		} else {
-			// lastIDがhavereadテーブルに存在しないということは記事を一つも読んでいないということ
-			// チャンネルの全てのメッセージのカウントをする
-			err = db.Get(&cnt,
-				"SELECT COUNT(*) as cnt FROM message WHERE channel_id = ?",
-				chID)
-		}
-		if err != nil {
-			return err
+		if read_cnt, flag := haveReadMap[chID]; flag {
+			cnt = messageCntMap[chID] - read_cnt
+		}else{
+			cnt = messageCntMap[chID]
 		}
 		r := map[string]interface{}{
 			"channel_id": chID,
